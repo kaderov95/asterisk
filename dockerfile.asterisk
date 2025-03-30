@@ -1,0 +1,50 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    sudo \
+    python3 \
+    libncurses5-dev \
+    libxml2-dev \
+    libssl-dev \
+    uuid-dev \
+    build-essential \
+    git \
+    pkg-config \
+    autoconf \
+    automake \
+    libedit-dev \
+    libjansson-dev \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /var/run/sshd
+RUN echo 'root:password' | chpasswd
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+# Создаем пользователя и директории
+RUN useradd -m -d /var/lib/asterisk -s /bin/bash asterisk \
+    && mkdir -p /etc/asterisk
+
+RUN git clone -b 22 https://github.com/asterisk/asterisk.git /usr/src/asterisk \
+    && cd /usr/src/asterisk \
+    && ./bootstrap.sh \
+    && ./configure --with-jansson-bundled \
+    && make \
+    && make install \
+    && make basic-pbx \
+    && ldconfig
+
+# Копируем конфиги и настраиваем права
+RUN cp -r /usr/src/asterisk/configs/* /etc/asterisk/ \
+    && chown -R asterisk:asterisk /etc/asterisk \
+    && chmod -R 750 /etc/asterisk
+
+# Создаем минимальные конфиги, если основные отсутствуют
+RUN [ ! -f /etc/asterisk/asterisk.conf ] && echo -e "[options]\nverbose = 3\ndebug = 0" > /etc/asterisk/asterisk.conf || true
+RUN [ ! -f /etc/asterisk/modules.conf ] && echo -e "[modules]\nautoload=yes" > /etc/asterisk/modules.conf || true
+RUN [ ! -f /etc/asterisk/logger.conf ] && echo -e "[general]\ndateformat=%F %T\nconsole => notice,warning,error" > /etc/asterisk/logger.conf || true
+
+EXPOSE 22 5060
+
+CMD ["/bin/bash", "-c", "service ssh start && asterisk -f"]
